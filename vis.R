@@ -3,7 +3,7 @@
 # Input: 
 # - dat, data frame of dim. T x 3, rows represent time periods 
 # - dat$m: mean forecasts
-# - dat$s: predictive standard deviations
+# - dat$sd: predictive standard deviations
 # - dat$rlz: (ex-post) realizations
 # - ax, T x 1 vector of (numeric) forecast target dates (default: integers 1 to T)
 # - ci, scalar between 0.5 and 1, sign. level for confidence bands (shown as shaded areas)
