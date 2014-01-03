@@ -7,3 +7,5 @@ Files in the folder are organized according to topics:
 
 See the files themselves for detailed documentation of the functions
 Files can be sourced for use within R, e.g. > source("denscomb.R")
+
+Functions were created in R Version 3.02
