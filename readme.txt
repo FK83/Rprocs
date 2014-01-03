@@ -1,9 +1,9 @@
-This folder contains R functions related to probabilistic forecasting  
-Author: Fabian Krüger, Fabian.Krueger83@gmail.com, comments welcome!
+R functions related to probabilistic forecasting  
+Author: Fabian Krüger, Fabian.Krueger83@gmail.com, comments welcome
 
 Files in the folder are organized according to topics:
 - denscomb.R (evaluating and combining continuous density forecasts)
-- vis.R (plotting functions, requires ggplot2 package, see http://ggplot2.org/)
+- vis.R (plotting tools, require the packages ``ggplot2'' and ``reshape'' which are freely available on CRAN, http://cran.r-project.org/)
 - (more to be added)
 
 See the files themselves for detailed documentation of the functions
