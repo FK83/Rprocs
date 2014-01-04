@@ -14,7 +14,7 @@
 ##############################################
 fcstplot <- function(dat,ax=NULL,ci=0.95,lx="time",ly="y"){
   require(ggplot2)
-  # Create numeric time variable (quarterly)
+  # Create numeric time variable 
   if (is.null(ax)) ax <- 1:dim(dat)[1]
   dat$tdate <- ax
   n <- dim(dat)[1]
