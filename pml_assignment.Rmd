@@ -1,0 +1,184 @@
+---
+title: "Practical Machine Learning Assignment"
+author: ""
+date: "April 10, 2016"
+output: html_document
+---
+
+# Basics
+
+```{r message = FALSE}
+# Set random seed
+set.seed(1234)
+
+# Clean cache; load libraries
+rm(list = ls())
+library(caret)
+library(magrittr)
+```
+
+```{r echo = FALSE}
+# Set working directory
+setwd("/home/fabian/Desktop/coursera")
+```
+
+We now load the training data which are provided on the course webpage, at <https://www.coursera.org/learn/practical-machine-learning/peer/R43St/prediction-assignment-writeup>. Further background information on the data set is available at <http://groupware.les.inf.puc-rio.br/har>.
+
+```{r}
+# Load training data
+dat <- read.table("pml-training.csv", header = TRUE, sep = ",")
+```
+
+The data set is fairly large, containing $19622$ observations on $160$ variables. It contains data on six persons (see variable "user\_name") who perform a weight lifting exercise in five different ways (variable "classe"). While classe = A corresponds to the correct way of doing the exercise, the other values of classe represent four common mistakes. The goal here is to predict the classe variable, using the predictor variables available in the sample.
+
+# Data cleaning
+
+As a first step, we conduct some basic checks on the data, which leads to the following data cleaning steps:
+
+- For factor variables, replace the levels "#DIV/0!" and "" by NA entries
+- Transfer some factor variables (containing many levels which appear to be numbers) to numeric
+- Remove some variables which display no variation (after having performed the preceding two steps)
+- Remove variables which contain NA values 
+- Remove the following variables, which are likely misleading: "X" (row index of the observations); "raw\_timestamp\_part\_1" and "raw\_timestamp\_part\_1" (integer-valued time codes) 
+
+These initial screening steps reduce the number of variables to $57$, down from $160$.
+
+```{r echo = FALSE, warning = FALSE}
+# For factor variables: Replace "#DIV/0!" and "" entries by NAs
+ind_factor <- sapply(dat, is.factor)
+for (jj in 1:ncol(dat)){
+  if (ind_factor[jj]){
+    aux <- dat[, jj] 
+    levels(aux)[levels(aux) == ""] <- NA
+    levels(aux)[levels(aux) == "#DIV/0!"] <- NA
+
+    # If there are very many factor levels: Try converting to numeric
+    if (length(unique(aux)) > 50 | names(dat)[jj] == "amplitude_yaw_belt"){
+      aux <- as.numeric(as.character(aux))
+    }
+    dat[, jj] <- aux
+  }
+}
+
+# Find variables without variation
+ind_constant <- apply(dat, 2, function(z) length(unique(z[!is.na(z)])) == 1)
+
+# Identify variables with missing values
+share_na <- apply(dat, 2, function(z) mean(is.na(z)))
+
+# Other variables which seem nonsensical
+ind_nonsense <- (names(dat) %in% c("X", "raw_timestamp_part_1", 
+                                   "raw_timestamp_part_2"))
+
+# Select well-behaved variables
+sel_var <- (!ind_constant) & (share_na == 0) & !ind_nonsense
+dat <- dat[, sel_var]
+```
+
+# Split data into training/validation sample
+
+According to the lecture on prediction study design, it is reasonable to choose a 3:1 relationship between the number of observations used for training versus validation. Note that we already have a test sample (provided as a separate data file). 
+
+```{r}
+inTraining <- createDataPartition(dat$classe, p = 0.75, list = FALSE)
+traindat <- dat[inTraining, ]
+valdat <- dat[-inTraining, ]
+```
+
+# Approach for prediction: Overview
+
+Our approach follows two steps: In step A, we use the training sample to fit two methods. In step B, we use the validation sample to analyze the performance of various convex combinations between the two methods (with combination weight $\omega$ on the first method, and weight $1-\omega$ on the second method). We then use the value $\omega^* \in [0, 1]$ for which the validation sample accuracy of the combined forecast is maxized. Note that step B is motivated by research findings that combining predictors is often more successful than using a single method (see the notes to week four of the lecture).
+
+We next describe the two steps in more detail.
+
+## Step A
+
+We first fit the following two models to the training data:
+
+- "pda", based on all $57$ variables 
+- "treebag", based on the ten most important variables identified by "pda"
+
+Both models are part of the caret package, and can be fit to the present data set within a few minutes on a standard notebook. In the case of "treebagg", we use a reduced set of important predictor variables in order to reduce the computational effort. We also experimented with other models implemented in the caret package (such as "gbm" or "rf"); however, these appear to be computationally very challenging for the present data set. 
+
+In order to fit "pda" and "treebag", we use caret's default setup for _trainControl_. Note that "pda" involves a single tuning parameter, $\lambda$, which governs the degree of regularization (see <https://cran.r-project.org/web/packages/mda/mda.pdf> for details). "treebag" does not involve any tuning parameters. 
+
+```{r warning = FALSE}
+# Fit penalized discriminant analysis
+fit1 <- train(classe~., method = "pda", data = traindat)
+
+# Find ten most important variables, according to pda
+topTen <- varImp(fit1)$importance %>% (function(z) rowMeans(as.matrix(z))) %>%
+  (function(z) sort(z, decreasing = TRUE)) %>% (function(z) head(z, 10))
+
+# Create small version of training data, containing only
+# ten most important variables
+traindat_small <- traindat[, c(names(topTen), "classe")]
+
+# Fit bagged tree
+fit2 <- train(classe~., method = "treebag", data = traindat_small)
+```
+
+## Step B
+
+In order to combine the predictions of the two models, we compute the weighted average of the two models' class probabilities, and then select the class with the highest combined probability. To describe this more formally, let $p_{i,c}^{pda}$ denote pda's predicted probability for case $i$ and class $c$, and let $p_{i,c}^{tba}$ denote treebag's predicted probability for case $i$ and class $c$. The combined probability using weight $\omega$ is given by $p_{i,c}^{comb}(\omega) = \omega~p_{i,c}^{pda} + (1-\omega)~p_{i,c}^{tba}$. Our classification is then given by the class $c$ for which $p_{i,c}^{comb}(\omega)$ is maximized.
+
+```{r warning = FALSE}
+# Compute validation sample probabilities for both models
+pred1 <- predict(fit1, newdata = valdat, type = "prob")
+pred2 <- predict(fit2, newdata = valdat, type = "prob")
+
+# Make grid of combination weights
+omega <- seq(from = 0, to = 1, by = 0.01)
+
+# Compute accuracy for each choice of omega
+acc_omega <- rep(0, length(omega))
+
+# Helper function needed below
+helper_fun <- function(z) c("A", "B", "C", "D", "E")[which.max(z)]
+
+# Loop over omega
+for (ii in 1:length(omega)){
+  # Combined probabilities
+  pred_c <- omega[ii]*pred1 + (1-omega[ii])*pred2
+  # Classification
+  class_c <- apply(pred_c, 1, helper_fun)
+  # Accuracy
+  acc_omega[ii] <- mean(class_c == valdat$classe)
+}
+
+# Best choice of omega
+omega_opt <- omega[which.max(acc_omega)]
+
+# Plot 
+plot(x = omega, y = acc_omega, xlab = expression(omega), ylab = "Accuracy", 
+     bty = "n", type = "l", lwd = 2, cex.axis = 1.3, cex.lab = 1.3)
+abline(v = omega_opt)
+
+# Confusion matrix for best choice of omega
+pred_opt <- omega_opt*pred1 + (1-omega_opt)*pred2
+class_opt <- apply(pred_opt, 1, helper_fun)
+confusionMatrix(class_opt, valdat$classe)
+```
+
+The preceding figure shows that the validation sample accuracy is maximized when putting about 30 \% weight on the "pda" prediction, and 70 \% on the "treebagg" prediction. The accuracy of the combination is at about 94 \%, meaning that only about 6 \% of the validation sample observations have been misclassified. Thus, the accuracy of the combination is about eight percentage points higher than the accuracy of "pda", and about two percentage points higher than the accuracy of "treebagg".
+
+# Test sample predictions
+
+```{r}
+# Load data
+testdat <- read.table("pml-testing.csv", sep = ",", header = TRUE)
+
+# Compute two model predictions
+pred1_test <- predict(fit1, newdata = testdat, type = "prob")
+pred2_test <- predict(fit2, newdata = testdat, type = "prob")
+
+# Compute combined prediction
+pred_opt_test <- pred1_test * omega_opt + pred2_test * (1-omega_opt)
+class_opt_test <- apply(pred_opt_test, 1, helper_fun)
+```
+
+```{r echo = FALSE}
+writeLines(class_opt_test, "pml-testing-predictions.csv")
+```
+
+
